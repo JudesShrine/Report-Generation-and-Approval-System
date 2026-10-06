@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Report Generation and Approval System</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        body {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1000px;
+            min-height: 620px;
+            background: white;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 35px rgba(0, 0, 0, 0.25);
+            display: flex;
+        }
+
+        /* LEFT SIDE */
+
+        .left-section {
+            width: 45%;
+            background: linear-gradient(135deg, #173b73, #2563b8);
+            color: white;
+            padding: 50px 35px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .college-logo {
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            background: white;
+            color: #1e3c72;
+            margin: 0 auto 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .left-section h1 {
+            font-size: 28px;
+            margin-bottom: 18px;
+        }
+
+        .left-section h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            font-weight: normal;
+        }
+
+        .left-section p {
+            font-size: 14px;
+            line-height: 1.7;
+            opacity: 0.9;
+        }
+
+        .features {
+            margin-top: 25px;
+            text-align: left;
+        }
+
+        .features p {
+            margin: 10px 0;
+        }
+
+        /* RIGHT SIDE */
+
+        .right-section {
+            width: 55%;
+            padding: 40px 45px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .form-container {
+            width: 100%;
+            max-width: 450px;
+        }
+
+        .form-container h2 {
+            text-align: center;
+            color: #1e3c72;
+            margin-bottom: 8px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #777;
+            font-size: 14px;
+            margin-bottom: 25px;
+        }
+
+        .form-box {
+            display: none;
+        }
+
+        .form-box.active {
+            display: block;
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 6px;
+        }
+
+        .input-group input,
+        .input-group select {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            outline: none;
+            font-size: 14px;
+            transition: 0.3s;
+            background: white;
+        }
+
+        .input-group input:focus,
+        .input-group select:focus {
+            border-color: #2563b8;
+            box-shadow: 0 0 0 2px rgba(37, 99, 184, 0.1);
+        }
+
+        .password-box {
+            position: relative;
+        }
+
+        .password-box input {
+            padding-right: 45px;
+        }
+
+        .show-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            color: #555;
+            font-size: 13px;
+            user-select: none;
+        }
+
+        .auth-note {
+            font-size: 12px;
+            color: #777;
+            margin-top: 5px;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 13px;
+            border: none;
+            border-radius: 8px;
+            background: #2563b8;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+            margin-top: 8px;
+        }
+
+        .btn:hover {
+            background: #173b73;
+        }
+
+        .switch-text {
+            text-align: center;
+            margin-top: 18px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .text-button {
+            border: 0;
+            background: transparent;
+            color: #2563b8;
+            padding: 4px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .text-button:hover { text-decoration: underline; }
+
+        .forgot-row {
+            margin-top: 12px;
+            text-align: right;
+            font-size: 13px;
+        }
+
+        .switch-text span {
+            color: #2563b8;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .switch-text span:hover {
+            text-decoration: underline;
+        }
+
+        .message {
+            display: none;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .required {
+            color: red;
+        }
+
+        .footer-note {
+            text-align: center;
+            font-size: 11px;
+            color: #999;
+            margin-top: 18px;
+        }
+
+        /* RESPONSIVE */
+
+        @media (max-width: 800px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .left-section {
+                width: 100%;
+                padding: 30px 25px;
+            }
+
+            .right-section {
+                width: 100%;
+                padding: 30px 25px;
+            }
+
+            .features {
+                display: none;
+            }
+
+            .left-section h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+
+        <!-- LEFT SECTION -->
+        <div class="left-section">
+
+            <div class="college-logo">
+                N
+            </div>
+
+            <h1>Report Generation & Approval System</h1>
+
+            <h2>College Management Portal</h2>
+
+            <p>
+                A centralized system for creating, submitting,
+                reviewing and approving college reports.
+            </p>
+
+            <div class="features">
+                <p>✓ Easy Report Submission</p>
+                <p>✓ Secure User Login</p>
+                <p>✓ Role-Based Access</p>
+                <p>✓ Report Approval</p>
+                <p>✓ File Attachment</p>
+                <p>✓ Admin Management</p>
+            </div>
+
+        </div>
+
+
+        <!-- RIGHT SECTION -->
+        <div class="right-section">
+
+            <div class="form-container">
+
+                <!-- LOGIN FORM -->
+
+                <div id="loginBox" class="form-box active">
+
+                    <h2>Login</h2>
+
+                    <p class="subtitle">
+                        Login to your college account
+                    </p>
+
+                    <div id="loginMessage" class="message"></div>
+
+                    <form id="loginForm">
+
+                        <!-- EMAIL -->
+
+                        <div class="input-group">
+                            <label>
+                                Email Address
+                                <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="email"
+                                id="loginEmail"
+                                placeholder="Enter your email"
+                                required
+                            >
+                        </div>
+
+
+                        <!-- PASSWORD -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Password
+                                <span class="required">*</span>
+                            </label>
+
+                            <div class="password-box">
+
+                                <input
+                                    type="password"
+                                    id="loginPassword"
+                                    placeholder="Enter your password"
+                                    required
+                                >
+
+                                <span
+                                    class="show-password"
+                                    onclick="togglePassword('loginPassword', this)"
+                                >
+                                    Show
+                                </span>
+
+                            </div>
+
+                        </div>
+
+
+                        <!-- COLLEGE CODE -->
+
+                        <div class="input-group">
+
+                            <label>
+                                College Code
+                                <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="text"
+                                id="loginCollegeCode"
+                                placeholder="Enter college code"
+                                required
+                            >
+
+                            <div class="auth-note">
+                                Enter the college's assigned code.
+                            </div>
+
+                        </div>
+
+
+                        <!-- ROLE -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Select Role
+                                <span class="required">*</span>
+                            </label>
+
+                            <select id="loginRole" required>
+
+                                <option value="">
+                                    -- Select Role --
+                                </option>
+
+                                <option value="Admin">
+                                    Admin
+                                </option>
+
+                                <option value="Staff">
+                                    Staff
+                                </option>
+
+                                <option value="HOD">
+                                    HOD
+                                </option>
+
+                                <option value="Principal">
+                                    Principal
+                                </option>
+
+                                <option value="Authorized Person">
+                                    Authorized Person
+                                </option>
+
+                            </select>
+
+                        </div>
+
+
+                        <!-- AUTHORIZATION CODE -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Authorization Code
+                                <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="password"
+                                id="loginAuthCode"
+                                placeholder="Enter authorization code"
+                                required
+                            >
+
+                            <div class="auth-note">
+                                Enter the authorization code assigned to your role.
+                            </div>
+
+                        </div>
+
+
+                        <button
+                            type="submit"
+                            class="btn"
+                        >
+                            Login
+                        </button>
+
+                        <div class="forgot-row">
+                            <button type="button" class="text-button" onclick="showForgotPassword()">
+                                Forgot password?
+                            </button>
+                        </div>
+
+                    </form>
+
+
+                    <div class="switch-text">
+
+                        Don't have an account?
+
+                        <span onclick="showSignup()">
+                            Sign Up
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <!-- PASSWORD RECOVERY -->
+
+                <div id="recoveryBox" class="form-box">
+
+                    <h2>Reset Password</h2>
+
+                    <p class="subtitle">
+                        Enter the email address linked to your college account.
+                    </p>
+
+                    <div id="recoveryMessage" class="message"></div>
+
+                    <form id="recoveryForm">
+                        <div class="input-group">
+                            <label for="recoveryEmail">Email Address</label>
+                            <input
+                                type="email"
+                                id="recoveryEmail"
+                                placeholder="Enter your registered email"
+                                autocomplete="email"
+                                required>
+                        </div>
+
+                        <button type="submit" class="btn">Send reset email</button>
+                    </form>
+
+                    <div class="switch-text">
+                        <button type="button" class="text-button" onclick="showLogin()">
+                            Back to login
+                        </button>
+                    </div>
+
+                </div>
+
+
+                <!-- SIGNUP FORM -->
+
+                <div id="signupBox" class="form-box">
+
+                    <h2>Create Account</h2>
+
+                    <p class="subtitle">
+                        Register for the college system
+                    </p>
+
+                    <div id="signupMessage" class="message"></div>
+
+                    <form id="signupForm">
+
+                        <!-- FULL NAME -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Full Name
+                                <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="text"
+                                id="signupName"
+                                placeholder="Enter your full name"
+                                required
+                            >
+
+                        </div>
+
+
+                        <!-- EMAIL -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Email Address
+                                <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="email"
+                                id="signupEmail"
+                                placeholder="Enter your email"
+                                required
+                            >
+
+                        </div>
+
+
+                        <!-- COLLEGE CODE -->
+
+                        <div class="input-group">
+
+                            <label>
+                                College Code
+                                <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="text"
+                                id="signupCollegeCode"
+                                placeholder="Create a college code (4+ characters)"
+                                required
+                            >
+
+                            <div class="auth-note">
+                                Create a code for your college. Use the same code when you log in.
+                            </div>
+
+                        </div>
+
+
+                        <!-- ROLE -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Select Role
+                                <span class="required">*</span>
+                            </label>
+
+                            <select id="signupRole" required>
+
+                                <option value="">
+                                    -- Select Role --
+                                </option>
+
+                                <option value="Admin">
+                                    Admin
+                                </option>
+
+                                <option value="Staff">
+                                    Staff
+                                </option>
+
+                                <option value="HOD">
+                                    HOD
+                                </option>
+
+                                <option value="Principal">
+                                    Principal
+                                </option>
+
+                                <option value="Authorized Person">
+                                    Authorized Person
+                                </option>
+
+                            </select>
+
+                        </div>
+
+
+                        <!-- AUTHORIZATION CODE -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Authorization Code
+                                <span class="required">*</span>
+                            </label>
+
+                            <input
+                                type="password"
+                                id="signupAuthCode"
+                                placeholder="Enter authorization code"
+                                required
+                            >
+
+                            <div class="auth-note">
+                                Enter the code provided for your selected role.
+                            </div>
+
+                        </div>
+
+
+                        <!-- PASSWORD -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Password
+                                <span class="required">*</span>
+                            </label>
+
+                            <div class="password-box">
+
+                                <input
+                                    type="password"
+                                    id="signupPassword"
+                                    placeholder="Create password"
+                                    minlength="6"
+                                    required
+                                >
+
+                                <span
+                                    class="show-password"
+                                    onclick="togglePassword('signupPassword', this)"
+                                >
+                                    Show
+                                </span>
+
+                            </div>
+
+                            <div class="auth-note">
+                                Password must contain at least 6 characters.
+                            </div>
+
+                        </div>
+
+
+                        <!-- CONFIRM PASSWORD -->
+
+                        <div class="input-group">
+
+                            <label>
+                                Confirm Password
+                                <span class="required">*</span>
+                            </label>
+
+                            <div class="password-box">
+
+                                <input
+                                    type="password"
+                                    id="signupConfirmPassword"
+                                    placeholder="Confirm your password"
+                                    minlength="6"
+                                    required
+                                >
+
+                                <span
+                                    class="show-password"
+                                    onclick="togglePassword('signupConfirmPassword', this)"
+                                >
+                                    Show
+                                </span>
+
+                            </div>
+
+                        </div>
+
+
+                        <button
+                            type="submit"
+                            class="btn"
+                        >
+                            Create Account
+                        </button>
+
+                    </form>
+
+
+                    <div class="switch-text">
+
+                        Already have an account?
+
+                        <span onclick="showLogin()">
+                            Login
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <div class="footer-note">
+                    © 2026 Report Generation and Approval System
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <script>
+
+        /* ==========================================
+           SYSTEM CODES
+        ========================================== */
+
+        const API_BASE = window.location.port === "8000"
+            ? window.location.origin
+            : "http://127.0.0.1:8000";
+
+        const authorizationCodes = {
+
+            "Admin": "ADMIN2026",
+
+            "Staff": "STAFF2026",
+
+            "HOD": "HOD2026",
+
+            "Principal": "PRINCIPAL2026",
+
+            "Authorized Person": "AUTH2026"
+
+        };
+
+        // Set this to a server endpoint that sends a single-use password-reset link.
+        // Email credentials and reset tokens must stay on the server, never in this page.
+        const PASSWORD_RESET_ENDPOINT = "";
+
+
+        /* ==========================================
+           SHOW LOGIN
+        ========================================== */
+
+        function showLogin() {
+
+            document
+                .getElementById("loginBox")
+                .classList.add("active");
+
+            document
+                .getElementById("signupBox")
+                .classList.remove("active");
+
+            document
+                .getElementById("recoveryBox")
+                .classList.remove("active");
+
+            clearMessages();
+
+        }
+
+
+        /* ==========================================
+           SHOW SIGNUP
+        ========================================== */
+
+        function showSignup() {
+
+            document
+                .getElementById("signupBox")
+                .classList.add("active");
+
+            document
+                .getElementById("loginBox")
+                .classList.remove("active");
+
+            document
+                .getElementById("recoveryBox")
+                .classList.remove("active");
+
+            clearMessages();
+
+        }
+
+
+        /* ==========================================
+           CLEAR MESSAGES
+        ========================================== */
+
+        function clearMessages() {
+
+            const loginMessage =
+                document.getElementById("loginMessage");
+
+            const signupMessage =
+                document.getElementById("signupMessage");
+
+            const recoveryMessage =
+                document.getElementById("recoveryMessage");
+
+            loginMessage.style.display = "none";
+            signupMessage.style.display = "none";
+            recoveryMessage.style.display = "none";
+
+            loginMessage.innerText = "";
+            signupMessage.innerText = "";
+            recoveryMessage.innerText = "";
+
+        }
+
+
+        function showForgotPassword(){
+            clearMessages();
+            document.getElementById("loginBox").classList.remove("active");
+            document.getElementById("signupBox").classList.remove("active");
+            document.getElementById("recoveryBox").classList.add("active");
+            const loginEmail = document.getElementById("loginEmail").value.trim();
+            if(loginEmail) document.getElementById("recoveryEmail").value = loginEmail;
+        }
+
+
+        /* ==========================================
+           DISPLAY MESSAGE
+        ========================================== */
+
+        function showMessage(elementId, message, type) {
+
+            const element =
+                document.getElementById(elementId);
+
+            element.innerText = message;
+
+            element.className =
+                "message " + type;
+
+            element.style.display = "block";
+
+        }
+
+
+        document
+            .getElementById("recoveryForm")
+            .addEventListener("submit", async function(event){
+                event.preventDefault();
+                const email = document.getElementById("recoveryEmail").value.trim().toLowerCase();
+
+                if(!PASSWORD_RESET_ENDPOINT){
+                    showMessage(
+                        "recoveryMessage",
+                        "Email password recovery is not configured yet. Connect a secure server reset endpoint to send recovery emails.",
+                        "error"
+                    );
+                    return;
+                }
+
+                const submitButton = this.querySelector('button[type="submit"]');
+                submitButton.disabled = true;
+                submitButton.textContent = "Sending…";
+
+                try {
+                    const response = await fetch(PASSWORD_RESET_ENDPOINT, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({email: email})
+                    });
+
+                    if(!response.ok) throw new Error("Reset request failed.");
+
+                    showMessage(
+                        "recoveryMessage",
+                        "If an account exists for that email, password reset instructions will be sent.",
+                        "success"
+                    );
+                } catch(error) {
+                    showMessage(
+                        "recoveryMessage",
+                        "Could not reach the password recovery service. Please try again later.",
+                        "error"
+                    );
+                } finally {
+                    submitButton.disabled = false;
+                    submitButton.textContent = "Send reset email";
+                }
+            });
+
+
+        /* ==========================================
+           TOGGLE PASSWORD
+        ========================================== */
+
+        function togglePassword(inputId, element) {
+
+            const input =
+                document.getElementById(inputId);
+
+            if (input.type === "password") {
+
+                input.type = "text";
+
+                element.innerText = "Hide";
+
+            } else {
+
+                input.type = "password";
+
+                element.innerText = "Show";
+
+            }
+
+        }
+
+
+        /* ==========================================
+           SIGN UP
+        ========================================== */
+
+        document
+            .getElementById("signupForm")
+            .addEventListener("submit", async function(event) {
+
+                event.preventDefault();
+
+
+                const name =
+                    document
+                        .getElementById("signupName")
+                        .value
+                        .trim();
+
+
+                const email =
+                    document
+                        .getElementById("signupEmail")
+                        .value
+                        .trim()
+                        .toLowerCase();
+
+
+                const collegeCode =
+                    document
+                        .getElementById("signupCollegeCode")
+                        .value
+                        .trim()
+                        .toUpperCase();
+
+
+                const role =
+                    document
+                        .getElementById("signupRole")
+                        .value;
+
+
+                const authCode =
+                    document
+                        .getElementById("signupAuthCode")
+                        .value
+                        .trim()
+                        .toUpperCase();
+
+
+                const password =
+                    document
+                        .getElementById("signupPassword")
+                        .value;
+
+
+                const confirmPassword =
+                    document
+                        .getElementById("signupConfirmPassword")
+                        .value;
+
+
+                /* NAME VALIDATION */
+
+                if (name.length < 3) {
+
+                    showMessage(
+                        "signupMessage",
+                        "Please enter a valid full name.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                /* EMAIL VALIDATION */
+
+                const emailPattern =
+                    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+
+                if (!emailPattern.test(email)) {
+
+                    showMessage(
+                        "signupMessage",
+                        "Please enter a valid email address.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                /* COLLEGE CODE VALIDATION */
+
+                if (collegeCode.length < 4) {
+
+                    showMessage(
+                        "signupMessage",
+                        "College code must contain at least 4 characters.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                /* ROLE VALIDATION */
+
+                if (role === "") {
+
+                    showMessage(
+                        "signupMessage",
+                        "Please select your role.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                /* AUTHORIZATION CODE VALIDATION */
+
+                if (authCode !== authorizationCodes[role]) {
+
+                    showMessage(
+                        "signupMessage",
+                        "Invalid authorization code for the selected role.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                /* PASSWORD LENGTH */
+
+                if (password.length < 6) {
+
+                    showMessage(
+                        "signupMessage",
+                        "Password must contain at least 6 characters.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                /* PASSWORD MATCH */
+
+                if (password !== confirmPassword) {
+
+                    showMessage(
+                        "signupMessage",
+                        "Passwords do not match.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                let response;
+                let result;
+                try {
+                    response = await fetch(`${API_BASE}/users/create/`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            username: email,
+                            email: email,
+                            password: password,
+                            role: role,
+                            name: name,
+                            college_code: collegeCode,
+                            authorization_code: authCode
+                        })
+                    });
+                    result = await response.json();
+                } catch (error) {
+                    showMessage("signupMessage", "Cannot connect to the server. Start the backend and try again.", "error");
+                    return;
+                }
+
+                if (!response.ok) {
+                    showMessage("signupMessage", result.detail || "Could not create account.", "error");
+                    return;
+                }
+
+
+                showMessage(
+                    "signupMessage",
+                    "Account created successfully! You can now login.",
+                    "success"
+                );
+
+
+                /* CLEAR FORM */
+
+                document
+                    .getElementById("signupForm")
+                    .reset();
+
+
+                /* MOVE TO LOGIN */
+
+                setTimeout(function() {
+
+                    showLogin();
+
+                    document
+                        .getElementById("loginEmail")
+                        .value = email;
+
+                }, 1500);
+
+            });
+
+
+        /* ==========================================
+           LOGIN
+        ========================================== */
+
+        document
+            .getElementById("loginForm")
+            .addEventListener("submit", async function(event) {
+
+                event.preventDefault();
+
+
+                const email =
+                    document
+                        .getElementById("loginEmail")
+                        .value
+                        .trim()
+                        .toLowerCase();
+
+
+                const password =
+                    document
+                        .getElementById("loginPassword")
+                        .value;
+
+
+                const collegeCode =
+                    document
+                        .getElementById("loginCollegeCode")
+                        .value
+                        .trim()
+                        .toUpperCase();
+
+
+                const role =
+                    document
+                        .getElementById("loginRole")
+                        .value;
+
+
+                const authCode =
+                    document
+                        .getElementById("loginAuthCode")
+                        .value
+                        .trim()
+                        .toUpperCase();
+
+
+                /* CHECK EMPTY ROLE */
+
+                if (role === "") {
+
+                    showMessage(
+                        "loginMessage",
+                        "Please select your role.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                /* AUTHORIZATION CODE */
+
+                if (authCode !== authorizationCodes[role]) {
+
+                    showMessage(
+                        "loginMessage",
+                        "Invalid authorization code for the selected role.",
+                        "error"
+                    );
+
+                    return;
+
+                }
+
+
+                let response;
+                let result;
+                try {
+                    response = await fetch(`${API_BASE}/users/login/`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            username: email,
+                            password: password,
+                            role: role,
+                            college_code: collegeCode,
+                            authorization_code: authCode
+                        })
+                    });
+                    result = await response.json();
+                } catch (error) {
+                    showMessage("loginMessage", "Cannot connect to the server. Start the backend and try again.", "error");
+                    return;
+                }
+
+                if (response.ok) {
+                    const user = {
+                        id: result.user_id,
+                        name: result.name,
+                        email: result.email,
+                        collegeCode: result.college_code,
+                        role: result.role,
+                        accessToken: result.access_token
+                    };
+
+
+                    /* SAVE CURRENT USER */
+
+                    localStorage.setItem(
+                        "currentUser",
+                        JSON.stringify(user)
+                    );
+
+                    // Keep the home page's user key in sync with the login session.
+                    localStorage.setItem(
+                        "collegeUser",
+                        JSON.stringify(user)
+                    );
+
+
+                    showMessage(
+                        "loginMessage",
+                        "Login successful! Redirecting...",
+                        "success"
+                    );
+
+
+                    /* REDIRECT */
+
+                    setTimeout(function() {
+
+                        window.location.href =
+                            "home.html";
+
+                    }, 1000);
+
+
+                } else {
+
+                    showMessage(
+                        "loginMessage",
+                        "Invalid email, password, role, college code, or authorization code.",
+                        "error"
+                    );
+
+                }
+
+            });
+
+    </script>
+
+</body>
+</html>
