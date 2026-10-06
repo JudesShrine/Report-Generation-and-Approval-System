@@ -946,9 +946,10 @@ document.getElementById("displayRole")
 ========================================== */
 
 const role = user.role;
-const API_BASE = window.location.port === "8000"
-    ? window.location.origin
-    : "http://127.0.0.1:8000";
+//const API_BASE = window.location.port === "8000"
+    //? window.location.origin
+    //: "http://127.0.0.1:8000";
+    const API_BASE = window.location.port;
 
 
 // Only the designated Authorized Person can review reports.
