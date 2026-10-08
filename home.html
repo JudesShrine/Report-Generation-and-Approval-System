@@ -664,11 +664,12 @@ th{
         </div>
 
 
-        <div class="form-group"><label for="reportEvent">Academic event (required for Event Report)</label><select id="reportEvent"><option value="">Select event</option></select></div>
+        <div class="form-group" id="reportEventGroup" hidden><label for="reportEvent">Academic event (required)</label><select id="reportEvent" disabled><option value="">Select event</option></select></div>
+        <div class="form-group" id="eventOutcomeGroup" hidden><label for="eventOutcome">Event outcome (required)</label><select id="eventOutcome" disabled required><option value="">Select outcome</option></select></div>
 
         <div class="form-group">
 
-            <label>Description</label>
+            <label id="descriptionLabel">Description</label>
 
             <textarea
                 id="description"
@@ -903,7 +904,7 @@ th{
   <div class="box"><h2>Academic Calendar</h2><p>After each event day has passed, an admin can confirm whether it was celebrated. A reason is required if it was not.</p>
     <div id="calendarFileDisplay" class="box">Loading uploaded calendar...</div>
     <div id="calendarAdminForm" style="display:none">
-      <div class="form-group"><label for="calendarFileUpload">Upload calendar document (PDF, Excel, or CSV; up to 25 MB)</label><input id="calendarFileUpload" type="file" accept=".pdf,.xlsx,.xls,.csv"><button class="primary" type="button" onclick="uploadAcademicCalendarFile()">Upload / Replace Calendar File</button><div id="calendarFileMessage" class="message"></div></div>
+      <div class="form-group"><label for="calendarFileUpload">Upload calendar document (PDF, Excel, or CSV; up to 25 MB)</label><input id="calendarFileUpload" type="file" accept=".pdf,.xlsx,.xls,.csv"><small>For Excel/CSV, include columns named Event (or Event Name) and Date. PDFs must contain selectable text; scanned PDFs cannot be analyzed.</small><button class="primary" type="button" onclick="uploadAcademicCalendarFile()">Upload / Replace Calendar File</button><div id="calendarFileMessage" class="message"></div></div>
       <input id="calendarEventId" type="hidden">
       <div class="form-group"><label>Academic year</label><input id="academicYear" placeholder="2026-2027"></div>
       <div class="form-group"><label>Event name</label><input id="academicEventName" placeholder="Annual Day"></div>
@@ -1050,6 +1051,7 @@ async function refreshReportsFromBackend(){
             fileName: record.file_name || "",
             fileType: record.file_type || ""
             , eventId: record.event_id || null,
+            eventOutcome: record.event_outcome || "",
             submittedOn: record.submitted_on || ""
             , submittedEmail: record.submitted_email || "",
             approvedByEmail: record.approved_by_email || ""
@@ -1177,6 +1179,13 @@ document.getElementById("fileAttach").addEventListener("change", function(){
         : "Attach one file up to 10 GB. Actual available space depends on your browser and device.";
 });
 
+document.getElementById("reportType").addEventListener("change", updateEventReportFields);
+document.getElementById("eventOutcome").addEventListener("change", function(){
+    const label = document.getElementById("descriptionLabel");
+    label.textContent = this.value === "Not organized"
+        ? "Explain why the event was not organized (required)"
+        : "Description";
+});
 
 async function submitReport(){
 
@@ -1196,6 +1205,7 @@ async function submitReport(){
         document.getElementById("reportDate")
         .value;
     const eventId = document.getElementById("reportEvent").value;
+    const eventOutcome = document.getElementById("eventOutcome").value;
 
     const description =
         document.getElementById("description")
@@ -1245,6 +1255,11 @@ async function submitReport(){
         message.innerText = "Select the event from the academic calendar.";
         return;
     }
+    if(type === "Event Report" && !eventOutcome){
+        message.className = "message error";
+        message.innerText = "Select whether the event was organized.";
+        return;
+    }
 
 
     const maxFileSize = 10000000000;
@@ -1292,7 +1307,9 @@ async function submitReport(){
         status: "Pending",
         fileName: file.name,
         fileType: file.type,
-        attachmentId: reportId
+        attachmentId: reportId,
+        eventId: type === "Event Report" && eventId ? Number(eventId) : null,
+        eventOutcome: type === "Event Report" ? eventOutcome : ""
     };
 
     message.className = "message";
@@ -1313,7 +1330,8 @@ async function submitReport(){
                 attachment_id: reportId,
                 file_name: file.name,
                 file_type: file.type,
-                event_id: eventId ? Number(eventId) : null
+                event_id: type === "Event Report" && eventId ? Number(eventId) : null,
+                event_outcome: type === "Event Report" ? eventOutcome : null
             })
         });
         const apiReport = await apiResponse.json();
@@ -1348,6 +1366,9 @@ async function submitReport(){
     document.getElementById("reportType").value = "";
     document.getElementById("reportDate").value = "";
     document.getElementById("reportEvent").value = "";
+    document.getElementById("eventOutcome").value = "";
+    document.getElementById("descriptionLabel").textContent = "Description";
+    updateEventReportFields();
     document.getElementById("description").value = "";
     document.getElementById("fileAttach").value = "";
     document.getElementById("fileHelp").textContent =
@@ -1370,6 +1391,16 @@ function attachmentCell(report){
         ? `<button class="email-button" type="button" onclick="emailReport('${report.id}')">Email</button>`
         : "";
     return `<div class="report-actions">${fileActions}${emailAction}</div>`;
+}
+
+function reportTitleCell(report){
+    const eventOutcome = report.eventOutcome
+        ? `<br><small>Event outcome: ${report.eventOutcome}</small>`
+        : "";
+    const query = report.approverComment
+        ? `<br><small>Query: ${report.approverComment}</small>`
+        : "";
+    return `${report.title}${eventOutcome}${query}`;
 }
 
 async function getAttachmentBlob(report){
@@ -1434,6 +1465,7 @@ function reportEmailText(report){
         `Report ID: ${report.id}`,
         `Department: ${report.department}`,
         `Type: ${report.type || "Not specified"}`,
+        ...(report.eventOutcome ? [`Event outcome: ${report.eventOutcome}`] : []),
         `Date: ${report.date}`,
         `Submitted by: ${report.submittedBy}`,
         `Status: ${report.status}`,
@@ -1450,17 +1482,53 @@ async function loadAcademicEvents(){
     renderCreateCalendarEvents();
     const select = document.getElementById("reportEvent");
     select.innerHTML = '<option value="">Select event</option>';
-    academicEvents.filter(e => e.celebrated).forEach(e => {
-        select.insertAdjacentHTML("beforeend", `<option value="${e.id}" data-date="${e.event_date}">${e.title} — ${e.event_date}</option>`);
+    academicEvents.forEach(event => {
+        const option = document.createElement("option");
+        option.value = String(event.id);
+        option.dataset.date = event.event_date;
+        option.textContent = `${event.title} — ${event.event_date} (${event.celebration_status})`;
+        select.appendChild(option);
     });
     updateTodayEventNotice();
     select.onchange = function(){
         const option = select.selectedOptions[0];
         if(option && option.dataset.date) document.getElementById("reportDate").value = option.dataset.date;
         updateTodayEventNotice(false);
+        updateEventReportFields();
     };
+    updateEventReportFields();
     renderAcademicEventList();
     await refreshAcademicCalendarFile();
+}
+function updateEventReportFields(){
+    const isEventReport = document.getElementById("reportType").value === "Event Report";
+    const eventGroup = document.getElementById("reportEventGroup");
+    const outcomeGroup = document.getElementById("eventOutcomeGroup");
+    const eventSelect = document.getElementById("reportEvent");
+    const outcomeSelect = document.getElementById("eventOutcome");
+    eventGroup.hidden = !isEventReport;
+    outcomeGroup.hidden = !isEventReport;
+    eventSelect.disabled = !isEventReport;
+    eventSelect.required = isEventReport;
+    outcomeSelect.disabled = !isEventReport;
+    outcomeSelect.required = isEventReport;
+    outcomeSelect.replaceChildren(new Option("Select outcome", ""));
+    document.getElementById("descriptionLabel").textContent = "Description";
+    if(!isEventReport) return;
+
+    const event = academicEvents.find(item => String(item.id) === eventSelect.value);
+    if(!event) return;
+    const today = getLocalDateString();
+    if(event.celebration_status === "Celebrated"){
+        outcomeSelect.add(new Option("Event organized", "Organized"));
+    } else if(event.event_date < today){
+        outcomeSelect.add(new Option("Event not organized", "Not organized"));
+    }
+    if(outcomeSelect.options.length === 1){
+        const option = new Option("No report outcome is available until after the event day or admin confirmation.", "");
+        option.disabled = true;
+        outcomeSelect.add(option);
+    }
 }
 function getLocalDateString(){
     const today = new Date();
@@ -1627,9 +1695,9 @@ async function uploadAcademicCalendarFile(){
         const response = await fetch(`${API_BASE}/academic-calendar/file`, {method: "PUT", headers: {...authHeaders(), "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name)}, body: file});
         const result = await response.json();
         if(!response.ok) throw new Error(result.detail || "Could not upload calendar.");
-        message.textContent = "Calendar uploaded and visible to all users.";
+        await loadAcademicEvents();
+        message.textContent = `Calendar uploaded and analyzed. Added ${result.events_added} event(s); updated ${result.events_updated} existing event(s).`;
         input.value = "";
-        await refreshAcademicCalendarFile();
     } catch(error) { message.textContent = error.message; }
 }
 
@@ -1748,7 +1816,7 @@ function displayMyReports(){
 
                 <td>${report.id}</td>
 
-                <td>${report.title}${report.approverComment ? `<br><small>Query: ${report.approverComment}</small>` : ""}</td>
+                <td>${reportTitleCell(report)}</td>
 
                 <td>${report.department}</td>
 
@@ -1845,7 +1913,7 @@ function displayApproval(){
 
                 <td>${report.id}</td>
 
-                <td>${report.title}</td>
+                <td>${reportTitleCell(report)}</td>
 
                 <td>${report.department}</td>
 
@@ -1979,7 +2047,7 @@ function searchReports(){
 
                 <td>${report.id}</td>
 
-                <td>${report.title}</td>
+                <td>${reportTitleCell(report)}</td>
 
                 <td>${report.department}</td>
 
