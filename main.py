@@ -631,6 +631,11 @@ async def upload_academic_calendar_file(request: Request, db: Session = Depends(
     file_data = b"".join(chunks)
     try:
         extracted_events = extract_academic_calendar_events(safe_name, file_data)
+    except ModuleNotFoundError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Calendar analysis is not installed on this server. Run 'pip install -r requirements.txt' and restart the app.",
+        ) from error
     except (ValueError, csv.Error, UnicodeError, OSError, BadZipFile) as error:
         raise HTTPException(status_code=422, detail=f"Could not read the calendar file: {error}")
     if not extracted_events:
