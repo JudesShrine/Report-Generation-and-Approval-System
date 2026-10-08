@@ -190,6 +190,7 @@ class AcademicEvent(Base):
     title = Column(String, nullable=False, unique=True)
     event_date = Column(String, nullable=False)
     celebrated = Column(Integer, default=1, nullable=False)
+    celebration_status = Column(String, default="Pending", nullable=False)
     not_celebrated_reason = Column(Text, nullable=True)
     created_by = Column(Integer, nullable=False)
 
@@ -225,6 +226,15 @@ with engine.begin() as connection:
     for column_name in ("submitted_email", "approved_by_email"):
         if column_name not in existing_report_columns:
             connection.execute(text(f"ALTER TABLE reports ADD COLUMN {column_name} VARCHAR"))
+    existing_event_columns = {column["name"] for column in inspect(engine).get_columns("academic_events")}
+    if "celebration_status" not in existing_event_columns:
+        connection.execute(text(
+            "ALTER TABLE academic_events ADD COLUMN celebration_status VARCHAR NOT NULL DEFAULT 'Pending'"
+        ))
+        connection.execute(text(
+            "UPDATE academic_events SET celebration_status = "
+            "CASE WHEN celebrated = 1 THEN 'Celebrated' ELSE 'Not celebrated' END"
+        ))
 
 
 # ============================================================
@@ -394,7 +404,10 @@ class AcademicEventCreate(BaseModel):
     academic_year: str
     event_name: str
     event_date: str
-    celebrated: bool = True
+
+
+class AcademicEventCelebrationUpdate(BaseModel):
+    celebrated: bool
     not_celebrated_reason: Optional[str] = None
 
 
@@ -405,6 +418,7 @@ class AcademicEventResponse(BaseModel):
     title: str
     event_date: str
     celebrated: bool
+    celebration_status: str
     not_celebrated_reason: Optional[str] = None
     class Config:
         orm_mode = True
@@ -485,14 +499,12 @@ def create_academic_event(event: AcademicEventCreate, db: Session = Depends(get_
     name = event.event_name.strip()
     if not year or not name:
         raise HTTPException(status_code=400, detail="Academic year and event name are required.")
-    if not event.celebrated and not (event.not_celebrated_reason or "").strip():
-        raise HTTPException(status_code=400, detail="Give a reason when an event was not celebrated.")
     title = f"{name} ({year})"
     if db.query(AcademicEvent).filter(AcademicEvent.title == title).first():
         raise HTTPException(status_code=409, detail="This event already exists for that academic year.")
     record = AcademicEvent(academic_year=year, event_name=name, title=title,
-        event_date=event_date.isoformat(), celebrated=int(event.celebrated),
-        not_celebrated_reason=(event.not_celebrated_reason or "").strip() or None,
+        event_date=event_date.isoformat(), celebrated=0, celebration_status="Pending",
+        not_celebrated_reason=None,
         created_by=current_user.id)
     db.add(record)
     db.commit()
@@ -515,8 +527,6 @@ def update_academic_event(event_id: int, event: AcademicEventCreate, db: Session
         parsed_date = date.fromisoformat(event.event_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="Enter a valid event date.")
-    if not event.celebrated and not (event.not_celebrated_reason or "").strip():
-        raise HTTPException(status_code=400, detail="Give a reason when an event was not celebrated.")
     title = f"{name} ({year})"
     duplicate = db.query(AcademicEvent).filter(AcademicEvent.title == title, AcademicEvent.id != event_id).first()
     if duplicate:
@@ -524,9 +534,38 @@ def update_academic_event(event_id: int, event: AcademicEventCreate, db: Session
     record.academic_year = year
     record.event_name = name
     record.title = f"{record.event_name} ({record.academic_year})"
-    record.event_date = parsed_date.isoformat()
-    record.celebrated = int(event.celebrated)
-    record.not_celebrated_reason = (event.not_celebrated_reason or "").strip() or None
+    updated_date = parsed_date.isoformat()
+    if record.event_date != updated_date:
+        record.celebrated = 0
+        record.celebration_status = "Pending"
+        record.not_celebrated_reason = None
+    record.event_date = updated_date
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.put("/academic-events/{event_id}/celebration", response_model=AcademicEventResponse)
+def update_academic_event_celebration(
+    event_id: int,
+    update: AcademicEventCelebrationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "Admin":
+        raise HTTPException(status_code=403, detail="Only an Admin can update event celebration status.")
+    record = db.query(AcademicEvent).filter(AcademicEvent.id == event_id).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Academic calendar event not found.")
+    if date.fromisoformat(record.event_date) >= date.today():
+        raise HTTPException(status_code=400, detail="Event status can only be confirmed after the event day.")
+
+    reason = (update.not_celebrated_reason or "").strip()
+    if not update.celebrated and not reason:
+        raise HTTPException(status_code=400, detail="Give a reason when an event was not celebrated.")
+    record.celebrated = int(update.celebrated)
+    record.celebration_status = "Celebrated" if update.celebrated else "Not celebrated"
+    record.not_celebrated_reason = None if update.celebrated else reason
     db.commit()
     db.refresh(record)
     return record
@@ -802,8 +841,12 @@ def create_report(
         event = db.query(AcademicEvent).filter(AcademicEvent.id == report.event_id).first()
         if event is None:
             raise HTTPException(status_code=404, detail="Academic calendar event not found.")
-        if not event.celebrated:
-            raise HTTPException(status_code=400, detail=f"{event.title} was not celebrated: {event.not_celebrated_reason}")
+        if event.celebration_status != "Celebrated":
+            if event.celebration_status == "Pending":
+                detail = f"{event.title} is awaiting celebration confirmation after its event day."
+            else:
+                detail = f"{event.title} was not celebrated: {event.not_celebrated_reason}"
+            raise HTTPException(status_code=400, detail=detail)
         if report.report_date and report.report_date != event.event_date:
             raise HTTPException(status_code=400, detail="Report date must match the selected event date.")
         report.report_date = event.event_date
