@@ -900,7 +900,7 @@ th{
 
 
 <section id="calendar" class="page">
-  <div class="box"><h2>Academic Calendar</h2><p>Events not celebrated require a reason.</p>
+  <div class="box"><h2>Academic Calendar</h2><p>After each event day has passed, an admin can confirm whether it was celebrated. A reason is required if it was not.</p>
     <div id="calendarFileDisplay" class="box">Loading uploaded calendar...</div>
     <div id="calendarAdminForm" style="display:none">
       <div class="form-group"><label for="calendarFileUpload">Upload calendar document (PDF, Excel, or CSV; up to 25 MB)</label><input id="calendarFileUpload" type="file" accept=".pdf,.xlsx,.xls,.csv"><button class="primary" type="button" onclick="uploadAcademicCalendarFile()">Upload / Replace Calendar File</button><div id="calendarFileMessage" class="message"></div></div>
@@ -908,8 +908,6 @@ th{
       <div class="form-group"><label>Academic year</label><input id="academicYear" placeholder="2026-2027"></div>
       <div class="form-group"><label>Event name</label><input id="academicEventName" placeholder="Annual Day"></div>
       <div class="form-group"><label>Event date</label><input id="academicEventDate" type="date"></div>
-      <div class="form-group"><label><input id="eventCelebrated" type="checkbox" checked> Event celebrated</label></div>
-      <div class="form-group"><label>Reason if not celebrated</label><textarea id="eventReason"></textarea></div>
       <button class="primary" onclick="saveAcademicEvent()">Save event</button><button class="primary" onclick="resetEventForm()">Clear</button>
       <div id="calendarMessage" class="message"></div>
     </div><div id="calendarEvents"></div>
@@ -1461,8 +1459,7 @@ async function loadAcademicEvents(){
         if(option && option.dataset.date) document.getElementById("reportDate").value = option.dataset.date;
         updateTodayEventNotice(false);
     };
-    const list = document.getElementById("calendarEvents");
-    list.innerHTML = academicEvents.length ? academicEvents.map(e => `<div class="box"><strong>${e.title}</strong> — ${e.event_date} — ${e.celebrated ? "Celebrated" : "Not celebrated"}${e.not_celebrated_reason ? `<p>Reason: ${e.not_celebrated_reason}</p>` : ""}${role === "Admin" ? `<button class="primary" onclick="editAcademicEvent(${e.id})">Edit</button>` : ""}</div>`).join("") : "<p>No events have been added.</p>";
+    renderAcademicEventList();
     await refreshAcademicCalendarFile();
 }
 function getLocalDateString(){
@@ -1498,10 +1495,12 @@ function updateTodayEventNotice(autoSelectToday = true){
     }
 
     if(!dateInput.value) dateInput.value = today;
-    const uncelebratedEvent = academicEvents.find(event => event.event_date === today && !event.celebrated);
+    const todayEvent = academicEvents.find(event => event.event_date === today);
     notice.className = "message";
-    notice.textContent = uncelebratedEvent
-        ? `Notification: ${uncelebratedEvent.title} is marked not celebrated today${uncelebratedEvent.not_celebrated_reason ? ` (${uncelebratedEvent.not_celebrated_reason})` : ""}. You can still create other report types.`
+    notice.textContent = todayEvent && todayEvent.celebration_status === "Pending"
+        ? `Notification: ${todayEvent.title} is scheduled for today. Its celebration status can be confirmed after the event day; you can still create other report types.`
+        : todayEvent && todayEvent.celebration_status === "Not celebrated"
+            ? `Notification: ${todayEvent.title} was not celebrated${todayEvent.not_celebrated_reason ? ` (${todayEvent.not_celebrated_reason})` : ""}. You can still create other report types.`
         : "Notification: no celebrated academic event is scheduled for today. You can still create other report types or choose a celebrated event.";
 }
 function renderCreateCalendarEvents(){
@@ -1511,8 +1510,64 @@ function renderCreateCalendarEvents(){
     if(!academicEvents.length){ list.textContent = "No calendar events have been added yet."; return; }
     academicEvents.forEach(event => {
         const item = document.createElement("p");
-        item.textContent = `${event.title} — ${event.event_date} — ${event.celebrated ? "Celebrated" : `Not celebrated: ${event.not_celebrated_reason || "Reason not provided"}`}`;
+        const status = event.celebration_status === "Pending"
+            ? "Awaiting confirmation"
+            : event.celebration_status === "Celebrated"
+                ? "Celebrated"
+                : `Not celebrated: ${event.not_celebrated_reason || "Reason not provided"}`;
+        item.textContent = `${event.title} — ${event.event_date} — ${status}`;
         list.appendChild(item);
+    });
+}
+function renderAcademicEventList(){
+    const list = document.getElementById("calendarEvents");
+    if(!list) return;
+    list.replaceChildren();
+    if(!academicEvents.length){
+        list.textContent = "No events have been added.";
+        return;
+    }
+
+    const today = getLocalDateString();
+    academicEvents.forEach(event => {
+        const card = document.createElement("div");
+        card.className = "box";
+        const title = document.createElement("strong");
+        title.textContent = event.title;
+        const details = document.createElement("p");
+        details.textContent = `${event.event_date} — ${event.celebration_status === "Pending" ? "Awaiting confirmation" : event.celebration_status}`;
+        card.append(title, details);
+        if(event.not_celebrated_reason){
+            const reason = document.createElement("p");
+            reason.textContent = `Reason: ${event.not_celebrated_reason}`;
+            card.appendChild(reason);
+        }
+        if(role === "Admin"){
+            if(event.celebration_status === "Pending" && event.event_date < today){
+                const celebratedButton = document.createElement("button");
+                celebratedButton.type = "button";
+                celebratedButton.className = "primary";
+                celebratedButton.textContent = "Mark celebrated";
+                celebratedButton.onclick = () => updateAcademicEventCelebration(event.id, true);
+                const notCelebratedButton = document.createElement("button");
+                notCelebratedButton.type = "button";
+                notCelebratedButton.className = "primary";
+                notCelebratedButton.textContent = "Mark not celebrated";
+                notCelebratedButton.onclick = () => updateAcademicEventCelebration(event.id, false);
+                card.append(celebratedButton, notCelebratedButton);
+            } else if(event.celebration_status === "Pending"){
+                const pending = document.createElement("p");
+                pending.textContent = "Celebration status can be confirmed after the event day.";
+                card.appendChild(pending);
+            }
+            const editButton = document.createElement("button");
+            editButton.type = "button";
+            editButton.className = "primary";
+            editButton.textContent = "Edit";
+            editButton.onclick = () => editAcademicEvent(event.id);
+            card.appendChild(editButton);
+        }
+        list.appendChild(card);
     });
 }
 async function refreshAcademicCalendarFile(){
@@ -1584,18 +1639,41 @@ function editAcademicEvent(id){
     document.getElementById("academicYear").value = e.academic_year;
     document.getElementById("academicEventName").value = e.event_name;
     document.getElementById("academicEventDate").value = e.event_date;
-    document.getElementById("eventCelebrated").checked = !!e.celebrated;
-    document.getElementById("eventReason").value = e.not_celebrated_reason || "";
 }
-function resetEventForm(){ document.getElementById("calendarEventId").value = ""; document.getElementById("academicYear").value = ""; document.getElementById("academicEventName").value = ""; document.getElementById("academicEventDate").value = ""; document.getElementById("eventCelebrated").checked = true; document.getElementById("eventReason").value = ""; }
+function resetEventForm(){ document.getElementById("calendarEventId").value = ""; document.getElementById("academicYear").value = ""; document.getElementById("academicEventName").value = ""; document.getElementById("academicEventDate").value = ""; }
 async function saveAcademicEvent(){
     const id = document.getElementById("calendarEventId").value;
-    const payload = {academic_year: document.getElementById("academicYear").value.trim(), event_name: document.getElementById("academicEventName").value.trim(), event_date: document.getElementById("academicEventDate").value, celebrated: document.getElementById("eventCelebrated").checked, not_celebrated_reason: document.getElementById("eventReason").value.trim()};
+    const payload = {academic_year: document.getElementById("academicYear").value.trim(), event_name: document.getElementById("academicEventName").value.trim(), event_date: document.getElementById("academicEventDate").value};
     try {
         const response = await fetch(`${API_BASE}/academic-events/${id ? id : ""}`, {method: id ? "PUT" : "POST", headers: {"Content-Type":"application/json", ...authHeaders()}, body: JSON.stringify(payload)});
         const result = await response.json(); if(!response.ok) throw new Error(result.detail || "Could not save event.");
         document.getElementById("calendarMessage").innerText = "Academic calendar saved."; resetEventForm(); await loadAcademicEvents();
     } catch(error) { document.getElementById("calendarMessage").innerText = error.message; }
+}
+async function updateAcademicEventCelebration(id, celebrated){
+    let reason = "";
+    if(!celebrated){
+        reason = window.prompt("Why was this event not celebrated?");
+        if(reason === null) return;
+        reason = reason.trim();
+        if(!reason){
+            document.getElementById("calendarMessage").textContent = "Give a reason when an event was not celebrated.";
+            return;
+        }
+    }
+    try {
+        const response = await fetch(`${API_BASE}/academic-events/${id}/celebration`, {
+            method: "PUT",
+            headers: {"Content-Type":"application/json", ...authHeaders()},
+            body: JSON.stringify({celebrated, not_celebrated_reason: reason})
+        });
+        const result = await response.json();
+        if(!response.ok) throw new Error(result.detail || "Could not update event status.");
+        document.getElementById("calendarMessage").textContent = `${result.title}: ${result.celebration_status}.`;
+        await loadAcademicEvents();
+    } catch(error) {
+        document.getElementById("calendarMessage").textContent = error.message;
+    }
 }
 
 function emailReport(reportId){
