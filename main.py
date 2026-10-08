@@ -1,6 +1,7 @@
 from fastapi.responses import FileResponse
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from sqlalchemy import (
     Column,
     Integer,
@@ -14,11 +15,14 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import inspect, text
+from sqlalchemy import LargeBinary
 from pydantic import BaseModel
 from typing import Optional
 from pathlib import Path
 import secrets
+from datetime import date, timedelta
 from fastapi import Header
+from urllib.parse import quote, unquote
 
 
 # ============================================================
@@ -38,7 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 APP_DIR = Path(__file__).resolve().parent
 
 
@@ -173,6 +176,32 @@ class Report(Base):
     attachment_id = Column(String, nullable=True)
     file_name = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
+    event_id = Column(Integer, nullable=True)
+    submitted_on = Column(String, nullable=True)
+    submitted_email = Column(String, nullable=True)
+    approved_by_email = Column(String, nullable=True)
+
+
+class AcademicEvent(Base):
+    __tablename__ = "academic_events"
+    id = Column(Integer, primary_key=True, index=True)
+    academic_year = Column(String, nullable=False, index=True)
+    event_name = Column(String, nullable=False)
+    title = Column(String, nullable=False, unique=True)
+    event_date = Column(String, nullable=False)
+    celebrated = Column(Integer, default=1, nullable=False)
+    not_celebrated_reason = Column(Text, nullable=True)
+    created_by = Column(Integer, nullable=False)
+
+
+class AcademicCalendarFile(Base):
+    __tablename__ = "academic_calendar_files"
+    id = Column(Integer, primary_key=True)
+    file_name = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)
+    file_data = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(Integer, nullable=False)
+    uploaded_on = Column(String, nullable=False)
 
 
 # Create database tables
@@ -187,6 +216,13 @@ with engine.begin() as connection:
             connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} VARCHAR"))
     existing_report_columns = {column["name"] for column in inspect(engine).get_columns("reports")}
     for column_name in ("report_date", "submitted_by", "submitted_role", "attachment_id", "file_name", "file_type"):
+        if column_name not in existing_report_columns:
+            connection.execute(text(f"ALTER TABLE reports ADD COLUMN {column_name} VARCHAR"))
+    if "event_id" not in existing_report_columns:
+        connection.execute(text("ALTER TABLE reports ADD COLUMN event_id INTEGER"))
+    if "submitted_on" not in existing_report_columns:
+        connection.execute(text("ALTER TABLE reports ADD COLUMN submitted_on VARCHAR"))
+    for column_name in ("submitted_email", "approved_by_email"):
         if column_name not in existing_report_columns:
             connection.execute(text(f"ALTER TABLE reports ADD COLUMN {column_name} VARCHAR"))
 
@@ -286,6 +322,10 @@ class ReportCreate(BaseModel):
     attachment_id: Optional[str] = None
     file_name: Optional[str] = None
     file_type: Optional[str] = None
+    event_id: Optional[int] = None
+    submitted_on: Optional[str] = None
+    submitted_email: Optional[str] = None
+    approved_by_email: Optional[str] = None
 
 
 # -------------------------
@@ -330,6 +370,10 @@ class ReportResponse(BaseModel):
     attachment_id: Optional[str] = None
     file_name: Optional[str] = None
     file_type: Optional[str] = None
+    event_id: Optional[int] = None
+    submitted_on: Optional[str] = None
+    submitted_email: Optional[str] = None
+    approved_by_email: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -346,6 +390,26 @@ class ApprovalRequest(BaseModel):
     approver_comment: Optional[str] = None
 
 
+class AcademicEventCreate(BaseModel):
+    academic_year: str
+    event_name: str
+    event_date: str
+    celebrated: bool = True
+    not_celebrated_reason: Optional[str] = None
+
+
+class AcademicEventResponse(BaseModel):
+    id: int
+    academic_year: str
+    event_name: str
+    title: str
+    event_date: str
+    celebrated: bool
+    not_celebrated_reason: Optional[str] = None
+    class Config:
+        orm_mode = True
+
+
 def get_current_user(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db)
@@ -356,6 +420,116 @@ def get_current_user(
     if user is None:
         raise HTTPException(status_code=401, detail="Please log in again.")
     return user
+
+
+@app.get("/academic-events/", response_model=list[AcademicEventResponse])
+def get_academic_events(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return db.query(AcademicEvent).order_by(AcademicEvent.event_date.desc()).all()
+
+
+@app.get("/academic-calendar/file")
+def get_academic_calendar_file(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    document = db.query(AcademicCalendarFile).order_by(AcademicCalendarFile.id.desc()).first()
+    if document is None:
+        return {"available": False}
+    return {"available": True, "file_name": document.file_name, "uploaded_on": document.uploaded_on}
+
+
+@app.put("/academic-calendar/file")
+async def upload_academic_calendar_file(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "Admin":
+        raise HTTPException(status_code=403, detail="Only an Admin can upload or replace the academic calendar.")
+    max_size = 25 * 1024 * 1024
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > max_size:
+            raise HTTPException(status_code=413, detail="Academic calendar files must be 25 MB or smaller.")
+        chunks.append(chunk)
+    if not size:
+        raise HTTPException(status_code=400, detail="Choose an academic calendar file to upload.")
+    raw_name = unquote(request.headers.get("x-file-name", "academic-calendar"))
+    safe_name = raw_name.replace("\\", "/").split("/")[-1].strip()
+    extension = Path(safe_name).suffix.lower()
+    allowed_extensions = {".pdf", ".xlsx", ".xls", ".csv"}
+    if extension not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Upload a PDF, Excel, or CSV calendar file.")
+    content_type = request.headers.get("content-type", "application/octet-stream").split(";")[0]
+    document = AcademicCalendarFile(file_name=safe_name, content_type=content_type,
+        file_data=b"".join(chunks), uploaded_by=current_user.id, uploaded_on=date.today().isoformat())
+    db.query(AcademicCalendarFile).delete()
+    db.add(document)
+    db.commit()
+    return {"message": "Academic calendar uploaded.", "file_name": safe_name, "uploaded_on": document.uploaded_on}
+
+
+@app.get("/academic-calendar/file/download")
+def download_academic_calendar_file(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    document = db.query(AcademicCalendarFile).order_by(AcademicCalendarFile.id.desc()).first()
+    if document is None:
+        raise HTTPException(status_code=404, detail="No academic calendar file has been uploaded.")
+    return Response(content=document.file_data, media_type=document.content_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(document.file_name)}"})
+
+
+@app.post("/academic-events/", response_model=AcademicEventResponse)
+def create_academic_event(event: AcademicEventCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "Admin":
+        raise HTTPException(status_code=403, detail="Only an Admin can manage the academic calendar.")
+    try:
+        event_date = date.fromisoformat(event.event_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Enter a valid event date.")
+    year = event.academic_year.strip()
+    name = event.event_name.strip()
+    if not year or not name:
+        raise HTTPException(status_code=400, detail="Academic year and event name are required.")
+    if not event.celebrated and not (event.not_celebrated_reason or "").strip():
+        raise HTTPException(status_code=400, detail="Give a reason when an event was not celebrated.")
+    title = f"{name} ({year})"
+    if db.query(AcademicEvent).filter(AcademicEvent.title == title).first():
+        raise HTTPException(status_code=409, detail="This event already exists for that academic year.")
+    record = AcademicEvent(academic_year=year, event_name=name, title=title,
+        event_date=event_date.isoformat(), celebrated=int(event.celebrated),
+        not_celebrated_reason=(event.not_celebrated_reason or "").strip() or None,
+        created_by=current_user.id)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.put("/academic-events/{event_id}", response_model=AcademicEventResponse)
+def update_academic_event(event_id: int, event: AcademicEventCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "Admin":
+        raise HTTPException(status_code=403, detail="Only an Admin can manage the academic calendar.")
+    record = db.query(AcademicEvent).filter(AcademicEvent.id == event_id).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Academic calendar event not found.")
+    year = event.academic_year.strip()
+    name = event.event_name.strip()
+    if not year or not name:
+        raise HTTPException(status_code=400, detail="Academic year and event name are required.")
+    try:
+        parsed_date = date.fromisoformat(event.event_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Enter a valid event date.")
+    if not event.celebrated and not (event.not_celebrated_reason or "").strip():
+        raise HTTPException(status_code=400, detail="Give a reason when an event was not celebrated.")
+    title = f"{name} ({year})"
+    duplicate = db.query(AcademicEvent).filter(AcademicEvent.title == title, AcademicEvent.id != event_id).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="This event already exists for that academic year.")
+    record.academic_year = year
+    record.event_name = name
+    record.title = f"{record.event_name} ({record.academic_year})"
+    record.event_date = parsed_date.isoformat()
+    record.celebrated = int(event.celebrated)
+    record.not_celebrated_reason = (event.not_celebrated_reason or "").strip() or None
+    db.commit()
+    db.refresh(record)
+    return record
 
 
 # ============================================================
@@ -602,6 +776,7 @@ def _create_session(user: User) -> str:
 )
 def create_report(
     report: ReportCreate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
@@ -618,6 +793,20 @@ def create_report(
             status_code=404,
             detail="User not found"
         )
+
+    if current_user.id != report.created_by:
+        raise HTTPException(status_code=403, detail="You can only submit reports for your own account.")
+    if report.report_type == "Event Report" and not report.event_id:
+        raise HTTPException(status_code=400, detail="Select the academic calendar event for this report.")
+    if report.event_id:
+        event = db.query(AcademicEvent).filter(AcademicEvent.id == report.event_id).first()
+        if event is None:
+            raise HTTPException(status_code=404, detail="Academic calendar event not found.")
+        if not event.celebrated:
+            raise HTTPException(status_code=400, detail=f"{event.title} was not celebrated: {event.not_celebrated_reason}")
+        if report.report_date and report.report_date != event.event_date:
+            raise HTTPException(status_code=400, detail="Report date must match the selected event date.")
+        report.report_date = event.event_date
 
 
     # Create report
@@ -640,6 +829,9 @@ def create_report(
         attachment_id=report.attachment_id,
         file_name=report.file_name,
         file_type=report.file_type,
+        event_id=report.event_id,
+        submitted_on=date.today().isoformat(),
+        submitted_email=user.email,
 
         status="Pending"
 
@@ -786,19 +978,19 @@ def get_approved_reports(
 
 
 # ============================================================
-# GET REJECTED REPORTS
+# GET REPORTS NEEDING QUERY REVIEW
 # ============================================================
 
 @app.get(
-    "/reports/status/rejected",
+    "/reports/status/query-review",
     response_model=list[ReportResponse]
 )
-def get_rejected_reports(
+def get_query_review_reports(
     db: Session = Depends(get_db)
 ):
 
     reports = db.query(Report).filter(
-        Report.status == "Rejected"
+        Report.status == "Query Review"
     ).order_by(
         Report.id.desc()
     ).all()
@@ -886,36 +1078,37 @@ def approve_or_reject_report(
 
     # Check status
 
-    allowed_status = ["Approved", "Rejected"]
+    allowed_status = ["Approved", "Query Review"]
 
 
     if approval.status not in allowed_status:
 
         raise HTTPException(
             status_code=400,
-            detail="Invalid approval status"
+            detail="Status must be Approved or Query Review."
         )
 
     if report.status != "Pending":
         raise HTTPException(status_code=409, detail="This report has already been reviewed.")
 
 
-    # Rejection requires comment
+    # A query must include a question or requested correction.
 
     if (
-        approval.status == "Rejected"
+        approval.status == "Query Review"
         and not approval.approver_comment
     ):
 
         raise HTTPException(
             status_code=400,
-            detail="Rejection reason is required"
+            detail="The query for the report is required."
         )
 
 
     report.status = approval.status
 
     report.approver_comment = approval.approver_comment
+    report.approved_by_email = current_user.email if approval.status == "Approved" else None
 
 
     db.commit()
@@ -987,8 +1180,8 @@ def dashboard(
     ).count()
 
 
-    rejected = db.query(Report).filter(
-        Report.status == "Rejected"
+    query_review = db.query(Report).filter(
+        Report.status == "Query Review"
     ).count()
 
 
@@ -1005,7 +1198,7 @@ def dashboard(
 
         "approved_reports": approved,
 
-        "rejected_reports": rejected
+        "query_review_reports": query_review
 
     }
 
