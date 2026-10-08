@@ -17,12 +17,16 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy import inspect, text
 from sqlalchemy import LargeBinary
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from pathlib import Path
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime
 from fastapi import Header
 from urllib.parse import quote, unquote
+from io import BytesIO, StringIO
+import csv
+import re
+from zipfile import BadZipFile
 
 
 # ============================================================
@@ -177,6 +181,7 @@ class Report(Base):
     file_name = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
     event_id = Column(Integer, nullable=True)
+    event_outcome = Column(String, nullable=True)
     submitted_on = Column(String, nullable=True)
     submitted_email = Column(String, nullable=True)
     approved_by_email = Column(String, nullable=True)
@@ -226,6 +231,8 @@ with engine.begin() as connection:
     for column_name in ("submitted_email", "approved_by_email"):
         if column_name not in existing_report_columns:
             connection.execute(text(f"ALTER TABLE reports ADD COLUMN {column_name} VARCHAR"))
+    if "event_outcome" not in existing_report_columns:
+        connection.execute(text("ALTER TABLE reports ADD COLUMN event_outcome VARCHAR"))
     existing_event_columns = {column["name"] for column in inspect(engine).get_columns("academic_events")}
     if "celebration_status" not in existing_event_columns:
         connection.execute(text(
@@ -333,6 +340,7 @@ class ReportCreate(BaseModel):
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     event_id: Optional[int] = None
+    event_outcome: Optional[Literal["Organized", "Not organized"]] = None
     submitted_on: Optional[str] = None
     submitted_email: Optional[str] = None
     approved_by_email: Optional[str] = None
@@ -381,6 +389,7 @@ class ReportResponse(BaseModel):
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     event_id: Optional[int] = None
+    event_outcome: Optional[str] = None
     submitted_on: Optional[str] = None
     submitted_email: Optional[str] = None
     approved_by_email: Optional[str] = None
@@ -449,6 +458,156 @@ def get_academic_calendar_file(db: Session = Depends(get_db), current_user: User
     return {"available": True, "file_name": document.file_name, "uploaded_on": document.uploaded_on}
 
 
+def _normalize_calendar_header(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
+
+
+def _parse_calendar_date(value: object) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    for date_format in (
+        "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y",
+        "%d-%m-%y", "%d/%m/%y", "%d %B %Y", "%d %b %Y",
+        "%B %d %Y", "%B %d, %Y", "%b %d %Y", "%b %d, %Y",
+    ):
+        try:
+            return datetime.strptime(raw, date_format).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _calendar_header_indexes(rows: list[tuple]) -> Optional[tuple[int, int, Optional[int], int]]:
+    date_headers = {"date", "event date", "date of event", "scheduled date", "day", "event date time"}
+    name_headers = {"event", "event name", "name", "programme", "program", "activity",
+                    "event activity", "title", "occasion", "festival", "name of event",
+                    "name of programme", "name of program"}
+    year_headers = {"academic year", "year", "session"}
+    for header_index, row in enumerate(rows[:20]):
+        headers = [_normalize_calendar_header(value) for value in row]
+        date_column = next((i for i, value in enumerate(headers) if value in date_headers), None)
+        name_column = next((i for i, value in enumerate(headers) if value in name_headers), None)
+        year_column = next((i for i, value in enumerate(headers) if value in year_headers), None)
+        if date_column is not None and name_column is not None and date_column != name_column:
+            return header_index, name_column, year_column, date_column
+    return None
+
+
+def _extract_calendar_table_events(rows: list[tuple], datemode: Optional[int] = None) -> list[dict]:
+    columns = _calendar_header_indexes(rows)
+    if columns is None:
+        return []
+    header_index, name_column, year_column, date_column = columns
+    extracted = []
+    for row in rows[header_index + 1:]:
+        if max(name_column, date_column, year_column or 0) >= len(row):
+            continue
+        name = str(row[name_column] or "").strip()
+        date_value = row[date_column]
+        parsed_date = _parse_calendar_date(date_value)
+        if parsed_date is None and datemode is not None and isinstance(date_value, (int, float)):
+            try:
+                import xlrd
+                from xlrd.biffh import XLRDError
+                parsed_date = xlrd.xldate.xldate_as_datetime(date_value, datemode).date()
+            except (ValueError, OverflowError, XLRDError):
+                parsed_date = None
+        if not name or parsed_date is None:
+            continue
+        year = str(row[year_column]).strip() if year_column is not None and row[year_column] else str(parsed_date.year)
+        extracted.append({"event_name": name, "event_date": parsed_date.isoformat(), "academic_year": year})
+    return extracted
+
+
+def _extract_calendar_pdf_events(file_data: bytes) -> list[dict]:
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+
+    try:
+        text_content = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(file_data)).pages)
+    except PdfReadError as error:
+        raise ValueError("The PDF could not be read. Upload a valid, text-based PDF.") from error
+    date_pattern = re.compile(
+        r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|"
+        r"\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})\b"
+    )
+    lines = [re.sub(r"\s+", " ", line).strip(" \t|-\u2022") for line in text_content.splitlines()]
+    extracted = []
+    for index, line in enumerate(lines):
+        match = date_pattern.search(line)
+        if not match:
+            continue
+        parsed_date = _parse_calendar_date(match.group(0))
+        if parsed_date is None:
+            continue
+        event_name = (line[:match.start()] + " " + line[match.end():]).strip(" \t|:-\u2022")
+        if not event_name and index:
+            previous_line = lines[index - 1]
+            if previous_line and not date_pattern.search(previous_line):
+                event_name = previous_line
+        event_name = re.sub(r"^\s*(?:\d+[\.\)]?\s+)+", "", event_name).strip()
+        if not event_name or _normalize_calendar_header(event_name) in {
+            "academic calendar", "event", "event name", "date", "event date"
+        }:
+            continue
+        extracted.append({
+            "event_name": event_name,
+            "event_date": parsed_date.isoformat(),
+            "academic_year": str(parsed_date.year),
+        })
+    return extracted
+
+
+def extract_academic_calendar_events(file_name: str, file_data: bytes) -> list[dict]:
+    extension = Path(file_name).suffix.lower()
+    if extension == ".csv":
+        try:
+            content = file_data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            content = file_data.decode("cp1252")
+        try:
+            dialect = csv.Sniffer().sniff(content[:8192], delimiters=",;\t|")
+        except csv.Error:
+            dialect = csv.excel
+        rows = [tuple(row) for row in csv.reader(StringIO(content), dialect)]
+        return _extract_calendar_table_events(rows)
+    if extension == ".xlsx":
+        from openpyxl import load_workbook
+        from openpyxl.utils.exceptions import InvalidFileException
+
+        try:
+            workbook = load_workbook(BytesIO(file_data), read_only=True, data_only=True)
+        except (InvalidFileException, BadZipFile, OSError) as error:
+            raise ValueError("The Excel workbook could not be read.") from error
+        try:
+            return [
+                event
+                for sheet in workbook.worksheets
+                for event in _extract_calendar_table_events(list(sheet.iter_rows(values_only=True)))
+            ]
+        finally:
+            workbook.close()
+    if extension == ".xls":
+        import xlrd
+        from xlrd.biffh import XLRDError
+
+        try:
+            workbook = xlrd.open_workbook(file_contents=file_data)
+        except XLRDError as error:
+            raise ValueError("The Excel workbook could not be read.") from error
+        extracted = []
+        for sheet in workbook.sheets():
+            rows = [tuple(sheet.row_values(row_index)) for row_index in range(sheet.nrows)]
+            extracted.extend(_extract_calendar_table_events(rows, workbook.datemode))
+        return extracted
+    if extension == ".pdf":
+        return _extract_calendar_pdf_events(file_data)
+    raise HTTPException(status_code=400, detail="Unsupported academic calendar format.")
+
+
 @app.put("/academic-calendar/file")
 async def upload_academic_calendar_file(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "Admin":
@@ -469,13 +628,60 @@ async def upload_academic_calendar_file(request: Request, db: Session = Depends(
     allowed_extensions = {".pdf", ".xlsx", ".xls", ".csv"}
     if extension not in allowed_extensions:
         raise HTTPException(status_code=400, detail="Upload a PDF, Excel, or CSV calendar file.")
+    file_data = b"".join(chunks)
+    try:
+        extracted_events = extract_academic_calendar_events(safe_name, file_data)
+    except (ValueError, csv.Error, UnicodeError, OSError, BadZipFile) as error:
+        raise HTTPException(status_code=422, detail=f"Could not read the calendar file: {error}")
+    if not extracted_events:
+        raise HTTPException(
+            status_code=422,
+            detail="No events with recognizable names and dates were found. Use table columns named Event (or Event Name) and Date; scanned PDFs are not supported.",
+        )
+
     content_type = request.headers.get("content-type", "application/octet-stream").split(";")[0]
     document = AcademicCalendarFile(file_name=safe_name, content_type=content_type,
-        file_data=b"".join(chunks), uploaded_by=current_user.id, uploaded_on=date.today().isoformat())
+        file_data=file_data, uploaded_by=current_user.id, uploaded_on=date.today().isoformat())
+    events_added = 0
+    events_updated = 0
+    imported_titles = set()
+    for event_data in extracted_events:
+        year = event_data["academic_year"].strip()
+        name = event_data["event_name"].strip()
+        title = f"{name} ({year})"
+        if title in imported_titles:
+            continue
+        imported_titles.add(title)
+        existing = db.query(AcademicEvent).filter(AcademicEvent.title == title).first()
+        if existing is None:
+            db.add(AcademicEvent(
+                academic_year=year,
+                event_name=name,
+                title=title,
+                event_date=event_data["event_date"],
+                celebrated=0,
+                celebration_status="Pending",
+                not_celebrated_reason=None,
+                created_by=current_user.id,
+            ))
+            events_added += 1
+        elif existing.event_date != event_data["event_date"]:
+            existing.event_date = event_data["event_date"]
+            existing.celebrated = 0
+            existing.celebration_status = "Pending"
+            existing.not_celebrated_reason = None
+            events_updated += 1
+
     db.query(AcademicCalendarFile).delete()
     db.add(document)
     db.commit()
-    return {"message": "Academic calendar uploaded.", "file_name": safe_name, "uploaded_on": document.uploaded_on}
+    return {
+        "message": "Academic calendar uploaded and analyzed.",
+        "file_name": safe_name,
+        "uploaded_on": document.uploaded_on,
+        "events_added": events_added,
+        "events_updated": events_updated,
+    }
 
 
 @app.get("/academic-calendar/file/download")
@@ -837,16 +1043,22 @@ def create_report(
         raise HTTPException(status_code=403, detail="You can only submit reports for your own account.")
     if report.report_type == "Event Report" and not report.event_id:
         raise HTTPException(status_code=400, detail="Select the academic calendar event for this report.")
+    if report.report_type == "Event Report" and not report.event_outcome:
+        raise HTTPException(status_code=400, detail="Select whether the event was organized.")
+    if report.report_type != "Event Report" and (report.event_id or report.event_outcome):
+        raise HTTPException(status_code=400, detail="Event and event outcome are only valid for Event Reports.")
     if report.event_id:
         event = db.query(AcademicEvent).filter(AcademicEvent.id == report.event_id).first()
         if event is None:
             raise HTTPException(status_code=404, detail="Academic calendar event not found.")
-        if event.celebration_status != "Celebrated":
-            if event.celebration_status == "Pending":
-                detail = f"{event.title} is awaiting celebration confirmation after its event day."
-            else:
-                detail = f"{event.title} was not celebrated: {event.not_celebrated_reason}"
-            raise HTTPException(status_code=400, detail=detail)
+        if report.event_outcome == "Organized" and event.celebration_status != "Celebrated":
+            raise HTTPException(status_code=400, detail=f"{event.title} must be confirmed as celebrated before submitting an organized event report.")
+        if report.event_outcome == "Not organized" and date.fromisoformat(event.event_date) >= date.today():
+            raise HTTPException(status_code=400, detail="An event can only be reported as not organized after its scheduled day.")
+        if report.event_outcome == "Not organized" and event.celebration_status == "Celebrated":
+            raise HTTPException(status_code=400, detail=f"{event.title} has already been confirmed as celebrated.")
+        if report.event_outcome == "Not organized" and not report.description.strip():
+            raise HTTPException(status_code=400, detail="Explain why the event was not organized.")
         if report.report_date and report.report_date != event.event_date:
             raise HTTPException(status_code=400, detail="Report date must match the selected event date.")
         report.report_date = event.event_date
@@ -873,6 +1085,7 @@ def create_report(
         file_name=report.file_name,
         file_type=report.file_type,
         event_id=report.event_id,
+        event_outcome=report.event_outcome,
         submitted_on=date.today().isoformat(),
         submitted_email=user.email,
 
