@@ -504,6 +504,7 @@ th{
          onclick="showPage('users',this)">
         <span>👥</span> Users
     </div>
+    <div class="menu" id="calendarMenu" onclick="showPage('calendar',this)">Academic Calendar</div>
 
 </aside>
 
@@ -547,12 +548,14 @@ th{
         </div>
 
         <div class="card">
-            <p>Rejected Reports</p>
+            <p>Query Review</p>
             <h2 id="rejectedReports">0</h2>
         </div>
 
     </div>
 
+
+    <div class="box" id="deadlineWarnings" style="display:none"></div>
 
     <div class="box">
 
@@ -579,6 +582,15 @@ th{
 <!-- CREATE REPORT -->
 
 <section id="create" class="page">
+
+    <div class="box">
+        <h2>Academic Calendar</h2>
+        <p>Calendar events and the uploaded calendar are available here while preparing a report.</p>
+        <div id="createCalendarFileDisplay">Loading uploaded calendar...</div>
+        <div id="createCalendarEvents"></div>
+        <div id="todayEventNotice" class="message" role="status" aria-live="polite"></div>
+        <button class="primary" type="button" onclick="showPage('calendar', document.getElementById('calendarMenu'))">Open full Academic Calendar</button>
+    </div>
 
     <div class="box">
 
@@ -651,6 +663,8 @@ th{
 
         </div>
 
+
+        <div class="form-group"><label for="reportEvent">Academic event (required for Event Report)</label><select id="reportEvent"><option value="">Select event</option></select></div>
 
         <div class="form-group">
 
@@ -875,7 +889,7 @@ th{
         <br>
 
         <h3>
-            Rejected:
+            Query Review:
             <span id="aRejected">0</span>
         </h3>
 
@@ -884,6 +898,23 @@ th{
 </section>
 
 
+
+<section id="calendar" class="page">
+  <div class="box"><h2>Academic Calendar</h2><p>Events not celebrated require a reason.</p>
+    <div id="calendarFileDisplay" class="box">Loading uploaded calendar...</div>
+    <div id="calendarAdminForm" style="display:none">
+      <div class="form-group"><label for="calendarFileUpload">Upload calendar document (PDF, Excel, or CSV; up to 25 MB)</label><input id="calendarFileUpload" type="file" accept=".pdf,.xlsx,.xls,.csv"><button class="primary" type="button" onclick="uploadAcademicCalendarFile()">Upload / Replace Calendar File</button><div id="calendarFileMessage" class="message"></div></div>
+      <input id="calendarEventId" type="hidden">
+      <div class="form-group"><label>Academic year</label><input id="academicYear" placeholder="2026-2027"></div>
+      <div class="form-group"><label>Event name</label><input id="academicEventName" placeholder="Annual Day"></div>
+      <div class="form-group"><label>Event date</label><input id="academicEventDate" type="date"></div>
+      <div class="form-group"><label><input id="eventCelebrated" type="checkbox" checked> Event celebrated</label></div>
+      <div class="form-group"><label>Reason if not celebrated</label><textarea id="eventReason"></textarea></div>
+      <button class="primary" onclick="saveAcademicEvent()">Save event</button><button class="primary" onclick="resetEventForm()">Clear</button>
+      <div id="calendarMessage" class="message"></div>
+    </div><div id="calendarEvents"></div>
+  </div>
+</section>
 
 <!-- USERS -->
 
@@ -946,10 +977,11 @@ document.getElementById("displayRole")
 ========================================== */
 
 const role = user.role;
-//const API_BASE = window.location.port === "8000"
-    //? window.location.origin
-    //: "http://127.0.0.1:8000";
-    const API_BASE = window.location.port;
+// const API_BASE = window.location.port === "8000"
+    // ? window.location.origin
+    // : "http://127.0.0.1:8000";
+const API_BASE = window.location.origin;
+const authHeaders = () => ({"Authorization": `Bearer ${user.accessToken || ""}`});
 
 
 // Only the designated Authorized Person can review reports.
@@ -969,6 +1001,8 @@ if(role !== "Admin"){
 
     document.getElementById("usersMenu")
         .style.display="none";
+} else {
+    document.getElementById("calendarAdminForm").style.display="block";
 
 }
 
@@ -999,7 +1033,7 @@ function saveReports(reports){
 }
 
 async function refreshReportsFromBackend(){
-    const response = await fetch(`${API_BASE}/reports/`);
+    const response = await fetch(`${API_BASE}/reports/`, {headers: authHeaders()});
     if(!response.ok) throw new Error("Could not load reports from the backend.");
     const records = await response.json();
     reportsCache = records.map(function(record){
@@ -1017,6 +1051,10 @@ async function refreshReportsFromBackend(){
             attachmentId: record.attachment_id || "",
             fileName: record.file_name || "",
             fileType: record.file_type || ""
+            , eventId: record.event_id || null,
+            submittedOn: record.submitted_on || ""
+            , submittedEmail: record.submitted_email || "",
+            approvedByEmail: record.approved_by_email || ""
         };
     });
     localStorage.setItem("reports", JSON.stringify(reportsCache));
@@ -1123,6 +1161,8 @@ function showPage(page,element){
 
     if(page==="users")
         displayUsers();
+    if(page==="calendar")
+        loadAcademicEvents();
 
 }
 
@@ -1157,6 +1197,7 @@ async function submitReport(){
     const date =
         document.getElementById("reportDate")
         .value;
+    const eventId = document.getElementById("reportEvent").value;
 
     const description =
         document.getElementById("description")
@@ -1199,6 +1240,11 @@ async function submitReport(){
         message.innerText =
             "Please attach a file.";
 
+        return;
+    }
+    if(type === "Event Report" && !eventId){
+        message.className = "message error";
+        message.innerText = "Select the event from the academic calendar.";
         return;
     }
 
@@ -1256,7 +1302,7 @@ async function submitReport(){
     try {
         const apiResponse = await fetch(`${API_BASE}/reports/`, {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
+            headers: {"Content-Type": "application/json", ...authHeaders()},
             body: JSON.stringify({
                 title: title,
                 department: department,
@@ -1268,7 +1314,8 @@ async function submitReport(){
                 submitted_role: user.role,
                 attachment_id: reportId,
                 file_name: file.name,
-                file_type: file.type
+                file_type: file.type,
+                event_id: eventId ? Number(eventId) : null
             })
         });
         const apiReport = await apiResponse.json();
@@ -1291,11 +1338,18 @@ async function submitReport(){
     }
 
     message.className = "message success";
-    message.innerText = "Report submitted successfully with attachment!";
+    const selectedEvent = academicEvents.find(item => String(item.id) === String(eventId));
+    const eventDeadline = selectedEvent ? new Date(selectedEvent.event_date + "T00:00:00") : null;
+    if(eventDeadline) eventDeadline.setDate(eventDeadline.getDate() + 7);
+    const submittedLate = eventDeadline && new Date(new Date().toDateString()) > eventDeadline;
+    message.innerText = submittedLate
+        ? "Report submitted, but it is more than one week after the event. A late submission warning has been recorded."
+        : "Report submitted successfully with attachment!";
     document.getElementById("reportTitle").value = "";
     document.getElementById("department").value = "";
     document.getElementById("reportType").value = "";
     document.getElementById("reportDate").value = "";
+    document.getElementById("reportEvent").value = "";
     document.getElementById("description").value = "";
     document.getElementById("fileAttach").value = "";
     document.getElementById("fileHelp").textContent =
@@ -1389,6 +1443,161 @@ function reportEmailText(report){
     ].join("\n");
 }
 
+let academicEvents = [];
+let uploadedAcademicCalendarFilename = "academic-calendar";
+async function loadAcademicEvents(){
+    const response = await fetch(`${API_BASE}/academic-events/`, {headers: authHeaders()});
+    if(!response.ok) throw new Error("Could not load the academic calendar.");
+    academicEvents = await response.json();
+    renderCreateCalendarEvents();
+    const select = document.getElementById("reportEvent");
+    select.innerHTML = '<option value="">Select event</option>';
+    academicEvents.filter(e => e.celebrated).forEach(e => {
+        select.insertAdjacentHTML("beforeend", `<option value="${e.id}" data-date="${e.event_date}">${e.title} — ${e.event_date}</option>`);
+    });
+    updateTodayEventNotice();
+    select.onchange = function(){
+        const option = select.selectedOptions[0];
+        if(option && option.dataset.date) document.getElementById("reportDate").value = option.dataset.date;
+        updateTodayEventNotice(false);
+    };
+    const list = document.getElementById("calendarEvents");
+    list.innerHTML = academicEvents.length ? academicEvents.map(e => `<div class="box"><strong>${e.title}</strong> — ${e.event_date} — ${e.celebrated ? "Celebrated" : "Not celebrated"}${e.not_celebrated_reason ? `<p>Reason: ${e.not_celebrated_reason}</p>` : ""}${role === "Admin" ? `<button class="primary" onclick="editAcademicEvent(${e.id})">Edit</button>` : ""}</div>`).join("") : "<p>No events have been added.</p>";
+    await refreshAcademicCalendarFile();
+}
+function getLocalDateString(){
+    const today = new Date();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+    return `${today.getFullYear()}-${month}-${day}`;
+}
+function updateTodayEventNotice(autoSelectToday = true){
+    const notice = document.getElementById("todayEventNotice");
+    const select = document.getElementById("reportEvent");
+    const dateInput = document.getElementById("reportDate");
+    if(!notice || !select || !dateInput) return;
+
+    const today = getLocalDateString();
+    const todayEvents = academicEvents.filter(event => event.event_date === today && event.celebrated);
+    if(todayEvents.length){
+        if(autoSelectToday && !select.value){
+            select.value = String(todayEvents[0].id);
+            dateInput.value = today;
+        }
+        const selectedTodayEvent = todayEvents.find(event => String(event.id) === select.value);
+        notice.className = "message success";
+        if(selectedTodayEvent){
+            notice.textContent = `Today is ${selectedTodayEvent.title}. It is selected below—upload the Event Report when ready.`;
+        } else if(todayEvents.length === 1){
+            notice.textContent = `Today is ${todayEvents[0].title}. Select it below to prepare its Event Report.`;
+        } else {
+            const names = todayEvents.map(event => event.title).join(", ");
+            notice.textContent = `Today's celebrated events are ${names}. Select the correct event before uploading its report.`;
+        }
+        return;
+    }
+
+    if(!dateInput.value) dateInput.value = today;
+    const uncelebratedEvent = academicEvents.find(event => event.event_date === today && !event.celebrated);
+    notice.className = "message";
+    notice.textContent = uncelebratedEvent
+        ? `Notification: ${uncelebratedEvent.title} is marked not celebrated today${uncelebratedEvent.not_celebrated_reason ? ` (${uncelebratedEvent.not_celebrated_reason})` : ""}. You can still create other report types.`
+        : "Notification: no celebrated academic event is scheduled for today. You can still create other report types or choose a celebrated event.";
+}
+function renderCreateCalendarEvents(){
+    const list = document.getElementById("createCalendarEvents");
+    if(!list) return;
+    list.replaceChildren();
+    if(!academicEvents.length){ list.textContent = "No calendar events have been added yet."; return; }
+    academicEvents.forEach(event => {
+        const item = document.createElement("p");
+        item.textContent = `${event.title} — ${event.event_date} — ${event.celebrated ? "Celebrated" : `Not celebrated: ${event.not_celebrated_reason || "Reason not provided"}`}`;
+        list.appendChild(item);
+    });
+}
+async function refreshAcademicCalendarFile(){
+    const display = document.getElementById("calendarFileDisplay");
+    try {
+        const response = await fetch(`${API_BASE}/academic-calendar/file`, {headers: authHeaders()});
+        const file = await response.json();
+        if(!response.ok) throw new Error(file.detail || "Could not load the calendar file.");
+        uploadedAcademicCalendarFilename = file.available ? file.file_name : "academic-calendar";
+        const createDisplay = document.getElementById("createCalendarFileDisplay");
+        if(createDisplay){
+            createDisplay.replaceChildren();
+            if(file.available){
+                const name = document.createElement("span");
+                name.textContent = `Uploaded document: ${file.file_name} (${file.uploaded_on}) `;
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "primary";
+                button.textContent = "View / Download calendar";
+                button.onclick = downloadAcademicCalendarFile;
+                createDisplay.append(name, button);
+            } else {
+                createDisplay.textContent = "No calendar document has been uploaded yet.";
+            }
+        }
+        display.innerHTML = file.available
+            ? `<strong>Uploaded calendar:</strong> <span id="calendarUploadedFileName"></span> <small>(uploaded ${file.uploaded_on})</small> <button class="primary" type="button" onclick="downloadAcademicCalendarFile()">View / Download</button>`
+            : "No calendar document has been uploaded yet.";
+        if(file.available){
+            const fileName = document.createElement("span");
+            fileName.textContent = file.file_name;
+            const target = document.getElementById("calendarUploadedFileName");
+            if(target) target.replaceWith(fileName);
+        }
+    } catch(error) { display.textContent = error.message; }
+}
+async function downloadAcademicCalendarFile(){
+    try {
+        const response = await fetch(`${API_BASE}/academic-calendar/file/download`, {headers: authHeaders()});
+        if(!response.ok){ const detail = await response.json(); throw new Error(detail.detail || "Could not download the calendar."); }
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = uploadedAcademicCalendarFilename;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    } catch(error) { alert(error.message); }
+}
+async function uploadAcademicCalendarFile(){
+    const input = document.getElementById("calendarFileUpload");
+    const file = input.files[0];
+    const message = document.getElementById("calendarFileMessage");
+    if(!file){ message.textContent = "Choose a calendar file first."; return; }
+    if(file.size > 25 * 1024 * 1024){ message.textContent = "File must be 25 MB or smaller."; return; }
+    try {
+        message.textContent = "Uploading calendar...";
+        const response = await fetch(`${API_BASE}/academic-calendar/file`, {method: "PUT", headers: {...authHeaders(), "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name)}, body: file});
+        const result = await response.json();
+        if(!response.ok) throw new Error(result.detail || "Could not upload calendar.");
+        message.textContent = "Calendar uploaded and visible to all users.";
+        input.value = "";
+        await refreshAcademicCalendarFile();
+    } catch(error) { message.textContent = error.message; }
+}
+
+function editAcademicEvent(id){
+    const e = academicEvents.find(item => item.id === id); if(!e) return;
+    document.getElementById("calendarEventId").value = e.id;
+    document.getElementById("academicYear").value = e.academic_year;
+    document.getElementById("academicEventName").value = e.event_name;
+    document.getElementById("academicEventDate").value = e.event_date;
+    document.getElementById("eventCelebrated").checked = !!e.celebrated;
+    document.getElementById("eventReason").value = e.not_celebrated_reason || "";
+}
+function resetEventForm(){ document.getElementById("calendarEventId").value = ""; document.getElementById("academicYear").value = ""; document.getElementById("academicEventName").value = ""; document.getElementById("academicEventDate").value = ""; document.getElementById("eventCelebrated").checked = true; document.getElementById("eventReason").value = ""; }
+async function saveAcademicEvent(){
+    const id = document.getElementById("calendarEventId").value;
+    const payload = {academic_year: document.getElementById("academicYear").value.trim(), event_name: document.getElementById("academicEventName").value.trim(), event_date: document.getElementById("academicEventDate").value, celebrated: document.getElementById("eventCelebrated").checked, not_celebrated_reason: document.getElementById("eventReason").value.trim()};
+    try {
+        const response = await fetch(`${API_BASE}/academic-events/${id ? id : ""}`, {method: id ? "PUT" : "POST", headers: {"Content-Type":"application/json", ...authHeaders()}, body: JSON.stringify(payload)});
+        const result = await response.json(); if(!response.ok) throw new Error(result.detail || "Could not save event.");
+        document.getElementById("calendarMessage").innerText = "Academic calendar saved."; resetEventForm(); await loadAcademicEvents();
+    } catch(error) { document.getElementById("calendarMessage").innerText = error.message; }
+}
+
 function emailReport(reportId){
     const report = getReports().find(function(item){ return item.id === reportId; });
     if(!report) return;
@@ -1403,14 +1612,16 @@ function emailReport(reportId){
     }
 
     const subject = `Report: ${report.title}`;
-    const gmailComposeUrl = "https://mail.google.com/mail/?view=cm&fs=1"
+    const recipients = encodeURIComponent(report.submittedEmail || "");
+    const cc = encodeURIComponent(report.approvedByEmail || "");
+    const gmailComposeUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${recipients}&cc=${cc}`
         + `&su=${encodeURIComponent(subject)}`
-        + `&body=${encodeURIComponent(body)}`;
+        + `&body=${encodeURIComponent(body + "\n\nAttach the approved report file before sending.")}`;
     const composeWindow = window.open(gmailComposeUrl, "_blank");
 
     // If popups are blocked, fall back to the device's configured email app.
     if(!composeWindow){
-        window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        window.location.href = `mailto:${encodeURIComponent(report.submittedEmail || "")}?cc=${encodeURIComponent(report.approvedByEmail || "")}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + "\n\nAttach the approved report file before sending.")}`;
     }
 }
 
@@ -1459,7 +1670,7 @@ function displayMyReports(){
 
                 <td>${report.id}</td>
 
-                <td>${report.title}</td>
+                <td>${report.title}${report.approverComment ? `<br><small>Query: ${report.approverComment}</small>` : ""}</td>
 
                 <td>${report.department}</td>
 
@@ -1535,9 +1746,9 @@ function displayApproval(){
 
                 <button
                     class="red"
-                    onclick="rejectReport('${report.id}')">
+                    onclick="queryReviewReport('${report.id}')">
 
-                    Reject
+                    Query Review
 
                 </button>
 
@@ -1612,17 +1823,17 @@ async function approveReport(id){
    REJECT
 ========================================== */
 
-async function rejectReport(id){
-    const reason = window.prompt("Enter a reason for rejecting this report:");
+async function queryReviewReport(id){
+    const reason = window.prompt("Enter the query or changes required for this report:");
     if(!reason || !reason.trim()) return;
     try {
         const response = await fetch(`${API_BASE}/reports/${id}/approval`, {
             method: "PUT",
             headers: {"Content-Type": "application/json", "Authorization": `Bearer ${user.accessToken || ""}`},
-            body: JSON.stringify({status: "Rejected", approver_comment: reason.trim()})
+            body: JSON.stringify({status: "Query Review", approver_comment: reason.trim()})
         });
         const result = await response.json();
-        if(!response.ok) throw new Error(result.detail || "Could not reject report.");
+        if(!response.ok) throw new Error(result.detail || "Could not send query.");
         await refreshReportsFromBackend();
         displayApproval();
         updateDashboard();
@@ -1741,7 +1952,7 @@ function updateDashboard(){
 
     const rejected=
         reports.filter(
-            r=>r.status==="Rejected"
+            r=>r.status==="Query Review"
         ).length;
 
 
@@ -1756,6 +1967,13 @@ function updateDashboard(){
 
     document.getElementById("rejectedReports")
         .innerText=rejected;
+    const overdue = reports.filter(r => {
+        if(!r.eventId || !r.date || !r.submittedOn) return false;
+        const deadline = new Date(r.date + "T00:00:00"); deadline.setDate(deadline.getDate() + 7);
+        return new Date(r.submittedOn + "T00:00:00") > deadline;
+    });
+    const warning = document.getElementById("deadlineWarnings");
+    if(warning){ const mine = overdue.filter(r => r.submittedBy === user.name); warning.style.display = mine.length ? "block" : "none"; warning.innerHTML = mine.length ? `Warning: ${mine.length} event report(s) were submitted more than one week after the event.` : ""; }
 
 
     document.getElementById("aTotal")
@@ -1866,6 +2084,7 @@ function logout(){
    INITIAL LOAD
 ========================================== */
 
+loadAcademicEvents().catch(function(error){ console.error("Could not load academic calendar:", error); });
 refreshReportsFromBackend().then(function(){
     updateDashboard();
     displayMyReports();
