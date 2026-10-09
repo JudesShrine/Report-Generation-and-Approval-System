@@ -1675,7 +1675,7 @@ async function refreshAcademicCalendarFile(){
 async function downloadAcademicCalendarFile(){
     try {
         const response = await fetch(`${API_BASE}/academic-calendar/file/download`, {headers: authHeaders()});
-        if(!response.ok){ const detail = await response.json(); throw new Error(detail.detail || "Could not download the calendar."); }
+        if(!response.ok) await throwApiResponseError(response, "Could not download the calendar.");
         const blob = await response.blob();
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
@@ -1683,6 +1683,20 @@ async function downloadAcademicCalendarFile(){
         document.body.appendChild(link); link.click(); link.remove();
         setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     } catch(error) { alert(error.message); }
+}
+async function throwApiResponseError(response, fallbackMessage){
+    const responseText = await response.text();
+    let result;
+    try {
+        result = responseText ? JSON.parse(responseText) : {};
+    } catch(error) {
+        throw new Error(`${fallbackMessage} The server returned an unreadable response (HTTP ${response.status}). Check that the app is running and its required packages are installed.`);
+    }
+    if(!response.ok){
+        const detail = typeof result.detail === "string" ? result.detail : "";
+        throw new Error(detail || `${fallbackMessage} (HTTP ${response.status}).`);
+    }
+    return result;
 }
 async function uploadAcademicCalendarFile(){
     const input = document.getElementById("calendarFileUpload");
@@ -1693,8 +1707,7 @@ async function uploadAcademicCalendarFile(){
     try {
         message.textContent = "Uploading calendar...";
         const response = await fetch(`${API_BASE}/academic-calendar/file`, {method: "PUT", headers: {...authHeaders(), "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name)}, body: file});
-        const result = await response.json();
-        if(!response.ok) throw new Error(result.detail || "Could not upload calendar.");
+        const result = await throwApiResponseError(response, "Could not upload calendar.");
         await loadAcademicEvents();
         message.textContent = `Calendar uploaded and analyzed. Added ${result.events_added} event(s); updated ${result.events_updated} existing event(s).`;
         input.value = "";
